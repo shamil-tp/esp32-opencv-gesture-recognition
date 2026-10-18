@@ -24,7 +24,7 @@
 #define Y3_GPIO_NUM       18
 #define Y2_GPIO_NUM        5
 #define VSYNC_GPIO_NUM    25
-#define HREF_GPIO_NUM     26
+#define HREF_GPIO_NUM     23  // Fixed: Corrected from 26 to 23 for AI-Thinker
 #define PCLK_GPIO_NUM     22
 
 // White Flash LED Pin
@@ -45,9 +45,7 @@ static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %
 esp_err_t stream_handler(httpd_req_t *req) {
   camera_fb_t * fb = NULL;
   esp_err_t res = ESP_OK;
-  size_t _jpg_buf_len = 0;
-  uint8_t * _jpg_buf = NULL;
-  char * part_buf[64];
+  char part_buf[64];
 
   res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
   if (res != ESP_OK) return res;
@@ -55,27 +53,26 @@ esp_err_t stream_handler(httpd_req_t *req) {
   while (true) {
     fb = esp_camera_fb_get();
     if (!fb) {
+      Serial.println("Camera capture failed");
       res = ESP_FAIL;
-    } else {
-      _jpg_buf_len = fb->len;
-      _jpg_buf = fb->buf;
+      break; // Exit loop if camera frame buffer fetch fails
     }
+
+    size_t hlen = snprintf(part_buf, sizeof(part_buf), _STREAM_PART, fb->len);
+    
+    res = httpd_resp_send_chunk(req, part_buf, hlen);
     if (res == ESP_OK) {
-      size_t hlen = snprintf((char *)part_buf, 64, _STREAM_PART, _jpg_buf_len);
-      res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
-    }
-    if (res == ESP_OK) {
-      res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
+      res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
     }
     if (res == ESP_OK) {
       res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
     }
-    if (fb) {
-      esp_camera_fb_return(fb);
-      fb = NULL;
-      _jpg_buf = NULL;
-    } else if (res != ESP_OK) {
-      break;
+
+    esp_camera_fb_return(fb);
+    fb = NULL;
+
+    if (res != ESP_OK) {
+      break; // Client disconnected or stream write failed
     }
   }
   return res;
@@ -124,10 +121,8 @@ void startCameraServer() {
 }
 
 void setup() {
-  // Disable brownout detector for voltage spikes during transmission
   WRITE_PERI_REG(RTC_CNTL_BROWNOUT_REG, 0);
 
-  // Configure Flash LED Pin
   pinMode(FLASH_LED_PIN, OUTPUT);
   digitalWrite(FLASH_LED_PIN, LOW);
 
@@ -152,7 +147,7 @@ void setup() {
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 10000000; // 10MHz clock for maximum signal stability
+  config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = FRAMESIZE_QVGA;
   config.jpeg_quality = 12;
